@@ -36,6 +36,9 @@ dependencies = [
 cpp = [
     { name = "algo-cpp" },
 ]
+fix = [
+    { name = "quickfix" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -50,10 +53,11 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.1" },
     { name = "pyarrow", specifier = ">=15" },
+    { name = "quickfix", marker = "extra == 'fix'", specifier = ">=1.16" },
     { name = "tabulate", specifier = ">=0.9" },
     { name = "yfinance", specifier = ">=0.2.40" },
 ]
-provides-extras = ["cpp"]
+provides-extras = ["cpp", "fix"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1459,6 +1463,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/b0/ed/fa23d28713004418b
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/11/e3df59614bebe0ca50c905442603eda64ae7ac19811d4e4f74aa2d51ca85/pytz-2026.4-py2.py3-none-any.whl", hash = "sha256:9d514388fbc89ca0833203464272ac485b8828568ab73532f5020f17e892a0ff", size = 506747, upload-time = "2026-09-24T03:58:38.629Z" },
 ]
+
+[[package]]
+name = "quickfix"
+version = "1.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/3b/06dcfc1112049d9383ab6c51d08a7d2b7d354b5b49b3928c3cea53d6a0d3/quickfix-1.16.0.tar.gz", hash = "sha256:825aceb72cfd69c30fbbf5b380b66f464abe1fe3188374f13d8c9987dd8eb4e9", size = 2779218, upload-time = "2026-05-09T12:07:11.281Z" }
 
 [[package]]
 name = "requests"

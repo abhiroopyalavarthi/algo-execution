@@ -33,6 +33,7 @@ That particular day is one where VWAP *lost*, and the reason is below in [Result
 - [TCA](#tca)
 - [Results](#results)
 - [C++ exchange and speed](#c-exchange-and-speed)
+- [Trading through a FIX gateway](#trading-through-a-fix-gateway)
 - [Tests](#tests)
 - [Running it](#running-it)
 - [What I'd do next](#what-id-do-next)
@@ -247,6 +248,33 @@ side every bar, so the first version of the C++ exchange was *slower* than Pytho
 end the first time I measured it). The fix, a count of non-empty levels per side, is in the order book repo
 ([`d4d95a1`](https://github.com/abhiroopyalavarthi/limit-order-book/commit/d4d95a1)).
 
+## Trading through a FIX gateway
+
+`FixExchange` (`core/fix_exchange.py`) is a third implementation of the same exchange interface.
+It sends orders over FIX 4.4 to my [C++ FIX gateway](https://github.com/abhiroopyalavarthi/fix-gateway),
+which runs risk checks and matches them in the same order book. It uses two FIX sessions:
+
+- `ALGO` carries the strategy's child orders.
+- `LP` replays each bar into the gateway's book, following the fill model above: an IOC that
+  sweeps our resting limits if the bar traded through them, a ladder of resting orders around the
+  typical price for our market orders to walk, then cancels for whatever is left of the ladder.
+
+Each step waits for its execution reports before the next, because the two sessions are separate
+TCP connections and the gateway could otherwise see them out of order. With that, a backtest over
+FIX gives the same fills as the simulator:
+
+```
+$ uv run algo fixcheck vwap --symbol AAPL --qty 200000 --date 2026-09-25
+VWAP buy 200,000 AAPL 2026-09-25
+  SimExchange:    390 fills, avg 338.3153, -16.26 bps vs VWAP
+  FixExchange:    390 fills, avg 338.3153, -16.26 bps vs VWAP  (3.3 s through the gateway)
+  identical fills, share for share
+```
+
+TWAP, POV and the market maker match too (`tests/test_fix_exchange.py`, which runs when a gateway
+is up). The strategy code doesn't change at all; `--exchange fix` works on `algo run` and
+`algo compare` as well.
+
 ## Tests
 
 `uv run pytest` (runs in CI on Ubuntu and macOS):
@@ -282,6 +310,10 @@ uv run algo pairs KO PEP --chart pairs.png
 uv run algo bench
 
 uv run algo compare --synthetic --symbol SYN   # no download needed
+
+# through the FIX gateway (start ../fix-gateway/build/fix_gateway first)
+uv sync --extra cpp --extra fix   # the quickfix package compiles from source, a few minutes
+uv run algo fixcheck vwap --symbol AAPL --qty 200000 --date 2026-09-25
 uv run pytest
 ```
 

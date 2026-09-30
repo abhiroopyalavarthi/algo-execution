@@ -25,6 +25,13 @@ def make_exchange(kind: str = "sim", model: FillModel | None = None) -> Exchange
         from algo.core.cpp_exchange import CppExchange
 
         return CppExchange(model)
+    if kind == "fix":
+        import os
+
+        from algo.core.fix_exchange import FixExchange
+
+        host, _, port = os.environ.get("FIX_GATEWAY", "127.0.0.1:9878").partition(":")
+        return FixExchange(model, host=host, port=int(port or 9878))
     raise ValueError(f"unknown exchange {kind!r}")
 
 
@@ -95,7 +102,11 @@ def run_order(
         raise ValueError(f"unknown algo {algo!r}; pick one of {EXEC_ALGOS}")
 
     ex = exchange if isinstance(exchange, Exchange) else make_exchange(exchange, model)
-    result = run_backtest({symbol: day_bars}, strat, ex)
+    try:
+        result = run_backtest({symbol: day_bars}, strat, ex)
+    finally:
+        if hasattr(ex, "close") and not isinstance(exchange, Exchange):
+            ex.close()  # FixExchange holds two FIX sessions open
     mask = [in_window(t, start, end) for t in day_bars.index]
     window_bars = day_bars[mask]
     tca = analyze(algo, symbol, side, qty, result.fills, window_bars)

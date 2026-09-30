@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 # C++ exchange (pybind11 bindings to the order book). Needs a C++20 compiler.
 cpp = ["algo-cpp"]
+# FixExchange: trade through the C++ FIX gateway (fix-gateway repo). The quickfix
+# package compiles from source on install, which takes a few minutes.
+fix = ["quickfix>=1.16"]
 
 [project.scripts]
 algo = "algo.cli:main"

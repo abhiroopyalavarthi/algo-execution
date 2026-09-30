@@ -7,6 +7,7 @@
   algo mm --symbol AAPL --date 2026-09-25
   algo pairs KO PEP
   algo bench                        bars/sec with the Python and C++ exchanges
+  algo fixcheck                     same VWAP order on SimExchange and through the FIX gateway
 """
 
 from __future__ import annotations
@@ -127,6 +128,37 @@ def cmd_bench(args) -> None:
     run_bench(repeats=args.repeats, days=args.days, out=Path(args.out) if args.out else None)
 
 
+def cmd_fixcheck(args) -> None:
+    """Run the same order on SimExchange and FixExchange and compare fill by fill."""
+    import time as _time
+
+    from algo.runner import run_order
+
+    history = _history(args)
+    day = args.date or _default_day(history)
+    side = Side[args.side.upper()]
+    kw = dict(start=_time_opt(args.start), end=_time_opt(args.end), lookback=args.lookback)
+    sim = run_order(args.algo, args.symbol, day, args.qty, side, history, exchange="sim", **kw)
+    t0 = _time.perf_counter()
+    fx = run_order(args.algo, args.symbol, day, args.qty, side, history, exchange="fix", **kw)
+    secs = _time.perf_counter() - t0
+    key = [(f.order_id, f.qty, f.price, f.ts) for f in sim.result.fills]
+    key_fix = [(f.order_id, f.qty, f.price, f.ts) for f in fx.result.fills]
+    print(f"{args.algo.upper()} {args.side} {args.qty:,} {args.symbol} {day}")
+    print(f"  SimExchange:  {len(key):>5} fills, avg {sim.tca.avg_px:.4f}, "
+          f"{sim.tca.vwap_slippage_bps:+.2f} bps vs VWAP")
+    print(f"  FixExchange:  {len(key_fix):>5} fills, avg {fx.tca.avg_px:.4f}, "
+          f"{fx.tca.vwap_slippage_bps:+.2f} bps vs VWAP  ({secs:.1f} s through the gateway)")
+    if key == key_fix:
+        print("  identical fills, share for share")
+    else:
+        print("  FILLS DIFFER")
+        sys.exit(1)
+
+
+_time_opt = _time
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="algo", description="execution algos + backtester + TCA")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -143,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
         sp.add_argument("--date", help="YYYY-MM-DD (default: last cached day)")
         sp.add_argument("--start", help="HH:MM, default 09:30")
         sp.add_argument("--end", help="HH:MM, default 16:00")
-        sp.add_argument("--exchange", default="sim", choices=["sim", "cpp"])
+        sp.add_argument("--exchange", default="sim", choices=["sim", "cpp", "fix"])
         sp.add_argument("--lookback", type=int, default=20, help="days for the VWAP curve")
         sp.add_argument("--synthetic", action="store_true", help="use generated data")
         sp.add_argument("--seed", type=int, default=7)
@@ -163,7 +195,7 @@ def main(argv: list[str] | None = None) -> None:
     res.add_argument("--days", type=int, default=10)
     res.add_argument("--pct-adv", type=float, default=0.01)
     res.add_argument("--lookback", type=int, default=20)
-    res.add_argument("--exchange", default="sim", choices=["sim", "cpp"])
+    res.add_argument("--exchange", default="sim", choices=["sim", "cpp", "fix"])
     res.add_argument("--synthetic", action="store_true")
     res.add_argument("--out", default="results")
     res.set_defaults(func=cmd_results)
@@ -176,7 +208,7 @@ def main(argv: list[str] | None = None) -> None:
     pr = sub.add_parser("pairs", help="pairs strategy on daily bars")
     pr.add_argument("a", nargs="?", default="KO")
     pr.add_argument("b", nargs="?", default="PEP")
-    pr.add_argument("--exchange", default="sim", choices=["sim", "cpp"])
+    pr.add_argument("--exchange", default="sim", choices=["sim", "cpp", "fix"])
     pr.add_argument("--synthetic", action="store_true")
     pr.add_argument("--chart")
     pr.set_defaults(func=cmd_pairs)
@@ -186,6 +218,11 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--days", type=int, default=20)
     b.add_argument("--out")
     b.set_defaults(func=cmd_bench)
+
+    fc = sub.add_parser("fixcheck", help="same order on SimExchange and through the FIX gateway")
+    fc.add_argument("algo", nargs="?", default="vwap", choices=["twap", "vwap", "pov", "aggressive"])
+    order_args(fc)
+    fc.set_defaults(func=cmd_fixcheck)
 
     args = p.parse_args(argv)
     try:
