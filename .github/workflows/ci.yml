@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # the order book lives in cpp/extern/limit-order-book
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (builds the C++ extension too)
+        run: uv sync --extra cpp
+      - name: Lint
+        run: uv run ruff check .
+      - name: Tests
+        run: uv run pytest -q
+      - name: Smoke run on synthetic data
+        run: uv run algo compare --synthetic --symbol SYN --exchange cpp
