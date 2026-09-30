@@ -14,7 +14,16 @@ pybind11. A test checks that both give the same fills, share for share.
 uv run algo compare --symbol AAPL --qty 200000 --date 2026-09-25
 ```
 
-<!-- RESULTS_EXAMPLE -->
+```
+algo    vs arrival   vs VWAP   filled  tracking
+twap       +82.99     -1.10   100.0%     6.58%
+vwap       +67.71    -16.26   100.0%     9.65%
+pov        +98.94    +14.71   100.0%    12.57%
+
+closest to market VWAP: TWAP (-1.10 bps)
+```
+
+That particular day is one where VWAP *lost*, and the reason is below in [Results](#results).
 
 ## Contents
 
@@ -141,11 +150,102 @@ against a 3-fill example worked out by hand.
 
 ## Results
 
-<!-- RESULTS_TABLE -->
+50 parent orders: AAPL, MSFT, NVDA, AMZN and JPM over the 10 sessions from 2026-09-15 to
+2026-09-28, each sized at 1% of the symbol's average daily volume with a random side, and each
+run with TWAP, VWAP and POV over the full day. Real 1-minute bars from Yahoo. Slippage in bps,
+positive = cost. Produced by `uv run algo results`; raw rows in
+[`results/results.csv`](results/results.csv).
+
+| algo | orders | vs VWAP mean | vs VWAP \|mean\| | vs VWAP std | vs arrival mean | tracking err % | fill rate % |
+|:--|--:|--:|--:|--:|--:|--:|--:|
+| TWAP | 50 | -0.87 | 10.24 | 15.70 | 5.35 | 11.76 | 100.00 |
+| VWAP | 50 | 0.20 | **6.61** | **9.91** | 6.45 | **5.41** | 100.00 |
+| POV | 50 | -2.08 | 11.76 | 17.89 | 4.19 | 13.34 | 99.98 |
+
+**VWAP finished closer to the market's VWAP than TWAP on 35 of 50 orders**, and cut the
+average absolute slippage vs VWAP from 10.24 to 6.61 bps (35% lower) with a spread about a third
+smaller. All three average near zero *signed* slippage vs VWAP, which is expected: over many
+orders a schedule doesn't beat the market's average price, it just tracks it more or less
+tightly. The absolute number and the std are what separate them.
+
+Arrival slippage is similar for all three (5-6 bps) because it's mostly the day's drift, not
+the algo: all three spread the order over the whole day, so they all pay for whatever the stock
+did between 09:30 and 16:00.
+
+![TWAP vs VWAP vs POV on AAPL](docs/compare_AAPL_2026-09-17.png)
+
+**Why VWAP usually wins, and the day it didn't.** Intraday volume is U-shaped: the first
+and last 30 minutes of AAPL's day carried 20% and 13% of the volume on average, versus 10% for
+the whole hour around lunch.
+
+![AAPL volume curve](docs/volume_curve_AAPL.png)
+
+TWAP ignores that, so it's under-weight at the open and close and over-weight at lunch, and its
+average price drifts away from the market's volume-weighted one. VWAP follows the historical
+curve. But it's a forecast: on 2026-09-25 AAPL traded 530k shares at 14:51, 1.18M at 14:56 (more than
+the opening minute) and more heavy minutes into the close, so the day's volume was back-loaded compared with the previous weeks. VWAP was
+ahead of the market all day (tracking error 9.7% vs TWAP's 6.6%) and ended 16 bps from the
+market's VWAP while TWAP ended 1 bp away.
+
+![VWAP on 2026-09-25](docs/vwap_AAPL_2026-09-25.png)
+
+POV has the worst tracking even though it follows live volume, because it can only react to the
+*previous* minute's volume and its pace is set from the average day. On a busy day it finishes
+early and on a quiet day it has to catch up at the end.
+
+A caveat on history: Yahoo only serves the last ~30 days of minute bars, so these curves are built
+from the 10-19 sessions before each test day rather than a full 20. Re-running `algo fetch`
+every week or two grows the cache.
+
+**Market maker** (AAPL, 2026-09-25, quoting 100 shares 2 cents either side of the last close,
+max position 1,000): traded 63,400 shares with an 82% fill rate, inventory never past 400 shares,
+flat at the close, **P&L -$957**. It loses because of the fill model: a quote only fills if
+the next bar trades *through* it, so every fill is one where the price kept going the wrong way
+(adverse selection) and the 2-cent edge doesn't cover it. That's also roughly why real market
+makers care so much about queue position and spread width.
+
+![Market maker](docs/mm_AAPL_2026-09-25.png)
+
+**Pairs** (KO/PEP, daily bars 2024-09-30 to 2026-09-29, 60-day rolling beta, $100k a leg):
+21 trades, **Sharpe -0.54, max drawdown -5.9%**. Most of the loss is one trade in
+February 2025, when the spread went from 2 to almost 5 standard deviations and hit the stop:
+the textbook failure mode where the relationship breaks and doesn't come back. After that it
+roughly breaks even. I left it as it is instead of tuning thresholds until the backtest looked
+good.
+
+![Pairs](docs/pairs_KO_PEP.png)
 
 ## C++ exchange and speed
 
-<!-- BENCH -->
+`CppExchange` has the same interface as `SimExchange`, but matching happens in my order book
+(`FastOrderBook`) through pybind11. `cpp/src/BarExchange.cpp` implements the fill model *with*
+the book: our resting limits are real orders in it, the bar's trade-through is a synthetic IOC
+order that sweeps them with normal price-time priority, and a market order walks a real ladder of
+synthetic resting orders. The batch results above were run on both exchanges and the CSVs are
+identical ([`results/cpp/`](results/cpp)), and `tests/test_cpp_exchange.py` checks every algo
+fill by fill.
+
+`uv run algo bench` on an M2 MacBook Pro (macOS, Python 3.12,
+[`results/bench_mac.md`](results/bench_mac.md)):
+
+| | Python exchange | C++ exchange | C++ / Python |
+|---|--:|--:|--:|
+| End to end: TWAP + VWAP + market maker, 20 days | 64,038 bars/s | 69,501 bars/s | 1.09x |
+| Exchange only: ~90 orders/bar, deep book | 443,547 orders/s | 721,183 orders/s | 1.63x |
+
+So the C++ exchange **doesn't make whole backtests meaningfully faster**. On minute bars the
+matching work per bar is tiny (a strategy sends one or two orders a minute), and the time goes
+to the Python side: the event loop, the strategies, creating `Order` and `Fill` objects, and
+the pybind11 call itself (argument conversion and building the return list cost more than the
+match). That's why `BarExchange.process_bar` handles a whole bar per call instead of exposing one
+call per match. The C++ side only pulls ahead when the book has real work to do, and even then
+by 1.63x, because every order still starts life as a Python object.
+
+Using the book this way also turned up a bug in it. When one side of `FastOrderBook` emptied,
+it walked the whole price band looking for the next best price, and the backtester empties a
+side every bar, so the first version of the C++ exchange was *slower* than Python (0.77x end to
+end the first time I measured it). The fix, a count of non-empty levels per side, is in the order book repo
+([`d4d95a1`](https://github.com/abhiroopyalavarthi/limit-order-book/commit/d4d95a1)).
 
 ## Tests
 
